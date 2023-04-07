@@ -21,7 +21,7 @@
 
 #define KILO_VERSION "0.0.1"
 #define CTRL_KEY(k) ((k) & 0x1f)
-#define ABUF_INIT {NULL, 0}
+#define ABUF_INIT {"", 0}
 
 using namespace std;
 
@@ -99,7 +99,7 @@ void pri(string s) {
 
 void abAppend(struct abuf *ab, string s, int len) {
 
-    ab->b.append(s);
+    pri("###");
     pri("###");
     ab->b.append(s);
     ab->len += s.length();
@@ -328,12 +328,14 @@ void editorDrawRows(struct abuf *ab) {
 // Refresh screen,
 void editorRefreshScreen() {
     struct abuf ab = ABUF_INIT;
+    pri("###");
     abAppend(&ab, "\x1b[?25l", 6);
     abAppend(&ab, "\x1b[H", 3);
     editorDrawRows(&ab);
 
     char buf[32];
     snprintf(buf, sizeof(buf), "\x1b[%d;%dH", E.cy + 1, E.cx + 1);
+
     abAppend(&ab, buf, strlen(buf));
 
     abAppend(&ab, "\x1b[?25h", 6);
@@ -405,6 +407,7 @@ int main(int argc, char *argv[]) {
 
     pri("Something!");
     while (1) {
+//        pri("###");
         editorRefreshScreen();
         editorProcessKeypress();
     };
