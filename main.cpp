@@ -39,7 +39,7 @@ enum editorKey {
 
 
 typedef struct erow {
-    int size;
+    size_t size;
     string chars;
 } erow;
 
@@ -97,12 +97,18 @@ void pri(string s) {
     enableRawMode();
 }
 
+void logg(string s) {
+    ofstream myfile;
+    myfile.open ("output.txt",std::ios_base::app);
+    myfile << s << endl;
+    myfile.close();
+}
+
 void abAppend(struct abuf *ab, string s, int len) {
 
-    pri("###");
-    pri("###");
     ab->b.append(s);
     ab->len += s.length();
+
 //    char *arr = new char[ab->len + len];
 //
 //    string n = (char *) realloc(ab->b, ab->len + len);
@@ -261,9 +267,7 @@ void editorAppendRow(char *s, size_t len) {
         .chars = s
     };
 
-    cout << "here!!";
     E.row.push_back(&er);
-    cout << "here!!";
 
 
     E.numrows++;
@@ -328,7 +332,6 @@ void editorDrawRows(struct abuf *ab) {
 // Refresh screen,
 void editorRefreshScreen() {
     struct abuf ab = ABUF_INIT;
-    pri("###");
     abAppend(&ab, "\x1b[?25l", 6);
     abAppend(&ab, "\x1b[H", 3);
     editorDrawRows(&ab);
@@ -339,8 +342,9 @@ void editorRefreshScreen() {
     abAppend(&ab, buf, strlen(buf));
 
     abAppend(&ab, "\x1b[?25h", 6);
-
-    write(STDOUT_FILENO, &ab.b, ab.len);
+    logg(ab.b);
+    logg("is this");
+    write(STDOUT_FILENO, ab.b.c_str(), ab.len);
     abFree(&ab);
 }
 
@@ -390,7 +394,7 @@ void error_handler(int sig) {
     void *array[10];
     size_t size;
     size = backtrace(array, 10); //get the void pointers for all of the entries
-    cout << "Error: signal "<< sig <<":\n"; //display error signal
+//    cout << "Error: signal "<< sig <<":\n"; //display error signal
     backtrace_symbols_fd(array, size, STDERR_FILENO);
     exit(1);
 }
@@ -405,9 +409,8 @@ int main(int argc, char *argv[]) {
         editorOpen(argv[1]);
     }
 
-    pri("Something!");
+//    pri("Something!");
     while (1) {
-//        pri("###");
         editorRefreshScreen();
         editorProcessKeypress();
     };
