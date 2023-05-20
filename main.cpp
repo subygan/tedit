@@ -15,13 +15,14 @@
 #include <sys/types.h>
 #include <termios.h>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 #include <fstream>
 
 
 #define KILO_VERSION "0.0.1"
 #define CTRL_KEY(k) ((k) & 0x1f)
-#define ABUF_INIT {"", 0}
+#define ABUF_INIT {(char *)"", 0}
 
 using namespace std;
 
@@ -37,14 +38,15 @@ enum editorKey {
     PAGE_DOWN
 };
 
-
 typedef struct erow {
     size_t size;
-    string chars;
+    char *chars;
 } erow;
 
 struct editorConfig {
     int cx, cy;
+    int rowoff;
+    int coloff;
     int screenrows;
     int screencols;
     int numrows;
@@ -56,7 +58,7 @@ struct editorConfig E;
 
 /*** append buffer to append strings together ***/
 struct abuf {
-    string b;
+    char *b;
     int len;
 };
 
@@ -90,24 +92,36 @@ void enableRawMode() {
 
 }
 
-
-void pri(string s) {
-    disableRawMode();
-    cout << s;
-    enableRawMode();
-}
-
-void logg(string s) {
+template<typename Type>
+void logg(Type s) {
     ofstream myfile;
     myfile.open ("output.txt",std::ios_base::app);
-    myfile << s << endl;
+    myfile << s << "::" << typeid(s).name() <<endl;
+
     myfile.close();
 }
 
-void abAppend(struct abuf *ab, string s, int len) {
 
-    ab->b.append(s);
-    ab->len += s.length();
+void abAppend(struct abuf *ab, char *s, int len) {
+
+    // Allocate additional memory if necessary
+//    char *new_b = new char[len];
+    char *new_b;
+    new_b = static_cast<char *>(malloc(ab->len + len + 1));
+    if (new_b == NULL) {
+        fprintf(stderr, "Error: unable to allocate memory\n");
+        exit(1);
+    }
+
+
+    ::strcpy(new_b, ab->b);
+    ::strcat(new_b, s);
+//    // Copy new characters to the end of the buffer
+//    std::memcpy(new_b + ab->len, s, len);
+//    // Update struct fields
+    ab->b = new_b;
+    ab->len += len;
+
 
 //    char *arr = new char[ab->len + len];
 //
@@ -122,11 +136,23 @@ void abAppend(struct abuf *ab, string s, int len) {
 }
 
 void abFree(struct abuf *ab) {
-    ab->b = "";
+    ab->b = (char *)"";
 }
 
-
-struct termios orig_termios;
+void editorScroll() {
+    if (E.cy < E.rowoff) {
+        E.rowoff = E.cy;
+    }
+    if (E.cy >= E.rowoff + E.screenrows) {
+        E.rowoff = E.cy - E.screenrows + 1;
+    }
+    if (E.cx < E.coloff) {
+        E.coloff = E.cx;
+    }
+    if (E.cx >= E.coloff + E.screencols) {
+        E.coloff = E.cx - E.screencols + 1;
+    }
+}
 
 
 int editorReadKey() {
@@ -196,15 +222,23 @@ int editorReadKey() {
 }
 
 void editorMoveCursor(int key) {
+    erow * row = reinterpret_cast<erow *>((E.cy >= E.numrows) ? NULL : &E.row[E.cy]);
+
     switch (key) {
         case ARROW_LEFT:
             if (E.cx != 0) {
                 E.cx--;
+            } else if (E.cy > 0) {
+                E.cy--;
+                E.cx = E.row[E.cy]->size;
             }
             break;
         case ARROW_RIGHT:
-            if (E.cx != E.screencols - 1) {
+            if (row && E.cx < row->size) {
                 E.cx++;
+            } else if (row && E.cx == row->size) {
+                E.cy++;
+                E.cx = 0;
             }
             break;
         case ARROW_UP:
@@ -213,10 +247,15 @@ void editorMoveCursor(int key) {
             }
             break;
         case ARROW_DOWN:
-            if (E.cy != E.screenrows - 1) {
+            if (E.cy < E.numrows) {
                 E.cy++;
             }
             break;
+    }
+    row = reinterpret_cast<erow *>((E.cy >= E.numrows) ? NULL : &E.row[E.cy]);
+    int rowlen = row ? row->size : 0;
+    if (E.cx > rowlen) {
+        E.cx = rowlen;
     }
 }
 
@@ -262,14 +301,18 @@ void editorAppendRow(char *s, size_t len) {
 //    memcpy(E.row[at]->chars, s, len);
 //    E.row[at]->chars[len] = '\0';
 
-    erow er = {
-        .size = len,
-        .chars = s
-    };
-
-    E.row.push_back(&er);
-
-
+    logg(s);
+    int at = E.numrows;
+    erow * er = new erow;
+    er->size = len;
+    er->chars = new char[len] ;
+    E.row.push_back(er);
+    ::strcpy(E.row[at]->chars, s);
+    E.row[at]->chars[len] = '\0';
+    logg("@@@");
+    logg(E.row.back()->chars);
+    logg(E.row.size());
+    logg(sizeof(E.row.back()->chars));
     E.numrows++;
 }
 
@@ -281,70 +324,103 @@ void editorOpen(char *filename) {
     // Then reading them one by one.
     FILE *fp = fopen(filename, "r");
     if (!fp) die("fopen");
-    char *line = NULL;
+    char *line = nullptr;
     size_t linecap = 0;
     ssize_t linelen;
-    linelen = getline(&line, &linecap, fp);
-    if (linelen != -1) {
+    while ((linelen = getline(&line, &linecap, fp)) != -1) {
         while (linelen > 0 && (line[linelen - 1] == '\n' ||
                                line[linelen - 1] == '\r'))
             linelen--;
-        editorAppendRow(line, linelen);
-    }
 
-    // free the line buffer and file pointer
+        editorAppendRow(line, linelen);
+        logg("^^^");
+//        logg(E.row.back()->chars);
+    }
+    logg("E.numrows");
+    logg(E.numrows);
+    logg(E.row.size());
+    if (E.row.back()->chars == nullptr ){
+        logg("nullptr!!!");
+    } else {
+        logg("not null");
+    }
+//    cout<<std::strlen(E.row.back()->chars);
     free(line);
     fclose(fp);
 }
 
 void editorDrawRows(struct abuf *ab) {
     int y;
+    logg("screenrows: ");
+    logg(E.screenrows);
+    logg(E.rowoff);
+    logg(E.numrows);
     for (y = 0; y < E.screenrows; y++) {
-        if (y >= E.numrows) {
+        int filerow = y + E.rowoff;
+        if (filerow >= E.numrows) {
             if (E.numrows == 0 && y == E.screenrows / 3) {
                 char welcome[80];
-                int welcomelen = snprintf(welcome, sizeof(welcome), "tedit --version %s", KILO_VERSION);
+                int welcomelen = snprintf(welcome, sizeof(welcome),
+                      "tedit --version %s", KILO_VERSION);
                 if (welcomelen > E.screencols) welcomelen = E.screencols;
                 int padding = (E.screencols - welcomelen) / 2;
                 if (padding) {
-                    abAppend(ab, "~", 1);
+                    abAppend(ab, (char *)"~", 1);
                     padding--;
                 }
-                while (padding--) abAppend(ab, " ", 1);
+                while (padding--) abAppend(ab, (char *)" ", 1);
                 abAppend(ab, welcome, welcomelen);
             } else {
-                abAppend(ab, "~", 1);
+                abAppend(ab, (char *)"~", 1);
             }
         } else {
-            int len = E.row[y]->size;
+            int len = E.row[filerow]->size - E.coloff;
+            if (len < 0) len = 0;
             if (len > E.screencols) len = E.screencols;
-            abAppend(ab, E.row[y]->chars, len);
+            logg("abAppend::");
+            logg(filerow);
+            logg(E.row[filerow]->chars);
+            logg(&E.row[filerow]->chars[E.coloff]);
+            abAppend(ab, &E.row[filerow]->chars[E.coloff], len);
         }
-        abAppend(ab, "\x1b[K", 3);
+        abAppend(ab, (char *)"\x1b[K", 3);
 
         if (y < E.screenrows - 1) {
-            abAppend(ab, "\r\n", 2);
+            abAppend(ab, (char *)"\r\n", 2);
         }
     }
+    logg(ab->b);
+    logg("ab->b");
 }
 
 
 // Refresh screen,
 void editorRefreshScreen() {
+    logg("!!!!!!!!!!!!!!!!!");
+    editorScroll();
+
+
     struct abuf ab = ABUF_INIT;
-    abAppend(&ab, "\x1b[?25l", 6);
-    abAppend(&ab, "\x1b[H", 3);
+
+    abAppend(&ab, (char *)"\x1b[?25l", 6);
+    abAppend(&ab, (char *)"\x1b[H", 3);
+
+    logg(ab.b);
+    logg("!!!!!!!!!!!!!!!!!");
+
     editorDrawRows(&ab);
 
+    logg(ab.b);
+    logg("-------------------");
     char buf[32];
-    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", E.cy + 1, E.cx + 1);
+
+    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cy - E.rowoff) + 1, (E.cx - E.coloff) + 1);
+
 
     abAppend(&ab, buf, strlen(buf));
 
-    abAppend(&ab, "\x1b[?25h", 6);
-    logg(ab.b);
-    logg("is this");
-    write(STDOUT_FILENO, ab.b.c_str(), ab.len);
+    abAppend(&ab, (char *)"\x1b[?25h", 6);
+    write(STDOUT_FILENO, ab.b, ab.len);
     abFree(&ab);
 }
 
@@ -384,6 +460,8 @@ int getWindowSize(int *rows, int *cols) {
 void initEditor() {
     E.cx = 0;
     E.cy = 0;
+    E.rowoff = 0;
+    E.coloff = 0;
     E.numrows = 0;
     E.row = vector<erow *>();
     if (getWindowSize(&E.screenrows, &E.screencols) == -1) die("getWindowSize");
@@ -396,7 +474,6 @@ void error_handler(int sig) {
     size = backtrace(array, 10); //get the void pointers for all of the entries
 //    cout << "Error: signal "<< sig <<":\n"; //display error signal
     backtrace_symbols_fd(array, size, STDERR_FILENO);
-    exit(1);
 }
 
 
@@ -405,12 +482,13 @@ int main(int argc, char *argv[]) {
     signal(SIGSEGV, error_handler);
     enableRawMode();
     initEditor();
+    logg("#####");
     if (argc >= 2) {
         editorOpen(argv[1]);
     }
 
-//    pri("Something!");
     while (1) {
+        logg("!!!!!");
         editorRefreshScreen();
         editorProcessKeypress();
     };
